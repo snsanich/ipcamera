@@ -1,41 +1,91 @@
 """Script to gather IMDB keywords from 2013's top grossing movies."""
 import sys
-import hass
 import os
-import asyncio
 import logging
+import haffmpeg
+import time
+import queue
+import threading
 
-@asyncio.coroutine
-async def read_image(core):
-    
-    from haffmpeg import ImageFrame, IMAGE_JPEG
-    ffmpeg = ImageFrame('C:\\ffmpeg-20170706-3b3501f-win32-static\\bin\\ffmpeg.exe', loop=core.loop)
+_LOGGER = logging.getLogger(__package__)
 
-    image = await ffmpeg.get_image(
-        'rtsp://192.168.0.4:5540/out.h264' # local camera
-        #'rtsp://184.72.239.149/vod/mp4:BigBuckBunny_175k.mov' # video (started from beginning all the time)
-        , output_format=IMAGE_JPEG,
-        extra_cmd='-r 4 -vf "mpdecimate=hi=64*6:lo=64*5:frac=0.33,showinfo, setpts=\'N/(30*TB)\'" -preset slow -metadata title="xTitle" -vsync 2 -r 24')
+def _process_image(image):
+    path = "{name}.jpg".format(name=time.time())
+    """Callback for processing image."""
     
+    _LOGGER.info("try it {path}".format(path=path))
     # Open file
     try:
-        fd = os.open("f1.jpg",os.O_RDWR|os.O_CREAT)    
+        fd = os.open(path,os.O_RDWR|os.O_CREAT)    
         os.write(fd, image)
     finally:
         os.close(fd)
-    
-    core.async_add_job(core.async_stop())
 
-    return image
+def read_image():
+    
+    command = [
+        'C:\\ffmpeg-20170706-3b3501f-win32-static\\bin\\ffmpeg.exe',
+        '-i',
+        'rtsp://192.168.0.4:5540/out.h264',
+        '-t', 
+        '00:00:10',
+        'output.mkv',
+        '-y'
+    ];
+
+    is_running, proc = open(False, command)
+    #time.sleep(30)
+    close(is_running, proc, 100)
+
+import subprocess
+
+# pylint: disable=too-many-arguments,too-many-locals
+def open(is_running, argv, stdout_pipe=False, stderr_pipe=True):
+    """Start a ffmpeg instance and pipe output."""
+    stdout = subprocess.PIPE if stdout_pipe else subprocess.DEVNULL
+    stderr = subprocess.PIPE if stderr_pipe else subprocess.DEVNULL
+
+    if is_running:
+        _LOGGER.critical("FFmpeg is allready running!")
+        return
+
+    # start ffmpeg
+    _LOGGER.debug("Start FFmpeg with %s", str(argv))
+    try:
+        return (True, subprocess.Popen(
+            argv,
+            stderr=stderr,
+            stdout=stdout,
+            stdin=subprocess.PIPE
+        ))
+    # pylint: disable=broad-except
+    except Exception as err:
+        _LOGGER.exception("FFmpeg fails %s", err)
+        return (False, False)
+
+def close(is_running, proc, timeout=5):
+    """Stop a ffmpeg instance."""
+    if not is_running:
+        _LOGGER.error("FFmpeg isn't running!")
+        return
+
+    # set stop command for ffmpeg
+    stop = b'q'
+
+    try:
+        # send stop to ffmpeg
+        stdout, stderr = proc.communicate(timeout=timeout)
+        _LOGGER.debug("Close FFmpeg process")
+        _LOGGER.warning(stderr)
+    except subprocess.TimeoutExpired:
+        _LOGGER.warning("Timeout while waiting of FFmpeg")
+        proc.kill()
+        proc.wait()
 
 def main():
     """Main entry point for the script."""
     """Return a still image response from the camera."""
-
-    core = hass.HomeAssistant()
-    core.add_job(read_image, core)
-
-    return core.start()
+    read_image()
     pass
 
 if __name__ == '__main__':
